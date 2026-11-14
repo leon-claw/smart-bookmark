@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Smart Bookmark",
+  "description": "连接桌面客户端并管理 Chrome 书签",
+  "version": "0.1.0",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "bookmarks",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Smart Bookmark"
+  }
+}

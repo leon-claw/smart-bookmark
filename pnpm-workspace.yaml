@@ -1,0 +1,9 @@
+packages:
+  - apps/desktop
+  - apps/chrome-extension
+allowBuilds:
+  electron: true
+  esbuild: true
+  electron-winstaller: false
+  '@google/genai': false
+  protobufjs: false

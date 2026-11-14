@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+  <title>Smart Bookmark</title>
+</head>
+<body>
+  <header><span aria-hidden="true">★</span> Smart Bookmark</header>
+  <main>
+    <p id="status" role="status">正在检查桌面连接…</p>
+    <form>
+      <label for="code">桌面端配对码</label>
+      <input id="code" required autocomplete="off" spellcheck="false" maxlength="12">
+      <button>连接桌面端</button>
+    </form>
+    <p id="help">启动 Smart Bookmark，在顶部打开 Chrome 连接信息，复制配对码。</p>
+  </main>
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

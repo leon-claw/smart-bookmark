@@ -1,0 +1,15 @@
+* { box-sizing: border-box; }
+body { width: 304px; margin: 0; font: 13px "Segoe UI", "Microsoft YaHei UI", sans-serif; color: #202124; }
+header { display: flex; align-items: center; gap: 9px; padding: 12px 16px; font-weight: 600; border-bottom: 1px solid #dadce0; }
+header span { background: #1a73e8; color: white; border-radius: 6px; padding: 3px 5px; }
+main { padding: 12px 16px 16px; }
+#status { margin: 0 0 12px; padding: 8px 10px; background: #f1f3f4; border-radius: 6px; }
+#status.connected { background: #e6f4ea; color: #137333; }
+#status.error { background: #fce8e6; color: #c5221f; }
+label { display: block; margin-bottom: 6px; }
+input, button { width: 100%; border-radius: 6px; padding: 7px 9px; font: inherit; }
+input { border: 1px solid #dadce0; }
+button { margin-top: 8px; border: 0; background: #1a73e8; color: white; cursor: pointer; }
+button:hover { background: #1557b0; }
+:focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }
+#help { color: #5f6368; line-height: 1.5; margin: 12px 0 0; }

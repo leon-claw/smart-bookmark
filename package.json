@@ -1,0 +1,15 @@
+{
+  "name": "smart-bookmark",
+  "private": true,
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=24.14.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @smart-bookmark/desktop start",
+    "build": "pnpm --filter @smart-bookmark/desktop build",
+    "package:win": "pnpm --filter @smart-bookmark/desktop package:win",
+    "check": "pnpm --recursive check",
+    "test": "node --test apps/desktop/test/*.test.mjs apps/chrome-extension/*.test.mjs"
+  }
+}
