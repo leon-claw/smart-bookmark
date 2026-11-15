@@ -12,13 +12,16 @@ export interface Message {
   retry?: string;
 }
 
-export function AgentPanel({ messages, busy, bookmarks, close, send, select }: {
+export function AgentPanel({ messages, busy, bookmarks, close, send, select, model, newSession, configure }: {
   messages: Message[];
   busy: boolean;
   bookmarks: Bookmark[];
   close: () => void;
   send: (prompt: string) => void;
   select: (id: string) => void;
+  model: string;
+  newSession: boolean;
+  configure: () => void;
 }) {
   const [draft, setDraft] = useState('');
   const bottom = useRef<HTMLDivElement>(null);
@@ -27,11 +30,15 @@ export function AgentPanel({ messages, busy, bookmarks, close, send, select }: {
   return (
     <aside aria-label="Pi Agent" className="absolute inset-y-0 right-0 z-20 flex w-[min(380px,100%)] flex-col border-l border-[#dadce0] bg-white shadow-lg">
       <header className="flex items-center gap-2 border-b border-[#dadce0] px-4 py-3 text-sm font-semibold">
-        <Sparkles size={16} className="text-[#1a73e8]" /> Pi Agent
-        <button className="ml-auto rounded-md p-1 hover:bg-[#f1f3f4]" aria-label="关闭 Agent" onClick={close}><X size={17} /></button>
+        <Sparkles size={16} className="shrink-0 text-[#1a73e8]" /> <span className="shrink-0">Pi Agent</span>
+        {model && <button className="min-w-0 truncate rounded-md px-2 py-1 text-xs font-normal text-[#5f6368] hover:bg-[#f1f3f4]"
+          title={model} onClick={configure}>{model}</button>}
+        <button className="ml-auto shrink-0 rounded-md p-1 hover:bg-[#f1f3f4]" aria-label="关闭 Agent" onClick={close}><X size={17} /></button>
       </header>
       <div className="chrome-scroll flex-1 space-y-3 overflow-auto p-4 text-[13px]" aria-live="polite">
-        {!messages.length && <p className="text-[#5f6368]">可以请 Pi 查找、新增、修改或删除本地书签。</p>}
+        {model && !messages.length && <p className="text-[#5f6368]">{newSession
+          ? '已应用模型设置。发送消息开始新会话。'
+          : '可以请 Pi 查找、新增、修改或删除本地书签。'}</p>}
         {messages.map(message => <div key={message.id} className={
           'space-y-2 rounded-lg p-3 ' + (message.error ? 'bg-[#fce8e6] text-[#c5221f]' :
             message.role === 'user' ? 'ml-8 bg-[#e8f0fe]' : 'mr-4 bg-[#f1f3f4]')
@@ -47,7 +54,7 @@ export function AgentPanel({ messages, busy, bookmarks, close, send, select }: {
         {busy && <p role="status" className="text-[#5f6368]">Pi 正在处理…</p>}
         <div ref={bottom} />
       </div>
-      <form className="flex gap-2 border-t border-[#dadce0] p-3" onSubmit={event => {
+      {model ? <form className="flex gap-2 border-t border-[#dadce0] p-3" onSubmit={event => {
         event.preventDefault();
         if (!draft.trim() || busy) return;
         send(draft.trim());
@@ -55,7 +62,10 @@ export function AgentPanel({ messages, busy, bookmarks, close, send, select }: {
       }}>
         <input className="sb-input min-w-0 flex-1" aria-label="书签请求" placeholder="查找我收藏的 SQLite 文档" value={draft} onChange={event => setDraft(event.target.value)} />
         <button className="sb-button sb-primary" aria-label="发送" disabled={busy || !draft.trim()}><Send size={16} /></button>
-      </form>
+      </form> : <div className="space-y-2 border-t border-[#dadce0] p-3">
+        <p className="text-[13px] text-[#5f6368]">配置模型后即可使用 Pi Agent。</p>
+        <button className="sb-button sb-primary" onClick={configure}>配置模型</button>
+      </div>}
     </aside>
   );
 }

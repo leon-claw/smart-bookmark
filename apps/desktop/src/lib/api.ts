@@ -12,6 +12,19 @@ export interface ChromeConnection {
   code: string;
   error?: string;
 }
+export interface AgentProfile {
+  provider: 'openai' | 'anthropic' | 'compatible';
+  modelId: string;
+  baseUrl: string;
+}
+export interface AgentSettings extends AgentProfile {
+  hasKey: boolean;
+  ready: boolean;
+}
+export type AgentSettingsInput = AgentProfile & { apiKey?: string; clearKey?: boolean };
+
+export const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
+  .replace(/^Error invoking remote method '[^']+': Error: /, '');
 
 interface BookmarkApi {
   snapshot(): Promise<Snapshot>;
@@ -24,6 +37,9 @@ interface BookmarkApi {
   import(): Promise<number>;
   writeback(items: PendingChange[]): Promise<{ written: number; errors: string[] }>;
   agent(prompt: string): Promise<{ text: string; matched: string[]; changed: string[] }>;
+  agentSettings(): Promise<AgentSettings>;
+  saveAgentSettings(input: AgentSettingsInput): Promise<AgentSettings>;
+  testAgentSettings(input: AgentSettingsInput): Promise<void>;
 }
 declare global {
   interface Window {

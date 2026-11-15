@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -17,30 +17,35 @@ if (!browserPath) throw new Error('Set SMART_BOOKMARK_TEST_CHROME to Chrome for 
 const temp = await mkdtemp(join(tmpdir(), 'smart-bookmark-e2e-'));
 const profile = join(temp, 'desktop');
 const browserProfile = join(temp, 'chrome');
-const pi = join(temp, 'pi');
 const children = [];
 const sockets = [];
 const browsers = [];
 let requests = 0;
+const contexts = [];
 
 const model = createServer(async (req, res) => {
   let data = '';
   for await (const chunk of req) data += chunk;
   const body = JSON.parse(data);
+  if (req.headers.authorization !== 'Bearer test-only') {
+    return res.writeHead(401).end('Unexpected API Key');
+  }
   if (body.tools?.map(tool => tool.function.name).join() !== 'bash') {
     return res.writeHead(400).end('Expected only bash');
   }
   requests++;
+  contexts.push(body);
+  const probe = body.messages.some(message => message.role === 'user' && message.content?.includes?.('Call the bash tool with command'));
   const done = body.messages.some(message => message.role === 'tool');
   const answer = done ? { content: '已添加书签' } : {
     tool_calls: [{ index: 0, id: 'call_add', type: 'function', function: {
-      name: 'bash', arguments: JSON.stringify({ command: 'bookmark add {"title":"Pi SQLite","url":"https://sqlite.org/"}' }),
+      name: 'bash', arguments: JSON.stringify({ command: probe ? 'bookmark find {}' : 'bookmark add {"title":"Pi SQLite","url":"https://sqlite.org/"}' }),
     } }],
   };
   res.writeHead(200, { 'content-type': 'text/event-stream' });
   for (const choice of [{ delta: { role: 'assistant' } }, { delta: answer }, { delta: {}, finish_reason: done ? 'stop' : 'tool_calls' }]) {
     res.write('data: ' + JSON.stringify({
-      id: 'test', object: 'chat.completion.chunk', created: 1, model: 'test-bookmarks', choices: [{ index: 0, ...choice }],
+      id: 'test', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, ...choice }],
     }) + '\n\n');
   }
   res.end('data: [DONE]\n\n');
@@ -111,16 +116,15 @@ async function attach(send, id) {
 }
 
 try {
-  await mkdir(pi);
   await new Promise(resolve => model.listen(0, '127.0.0.1', resolve));
-  await writeFile(join(pi, 'settings.json'), JSON.stringify({ defaultProvider: 'smoke', defaultModel: 'test-bookmarks' }));
-  await writeFile(join(pi, 'models.json'), JSON.stringify({ providers: { smoke: {
-    baseUrl: 'http://127.0.0.1:' + model.address().port + '/v1', api: 'openai-completions',
-    apiKey: 'test-only', models: [{ id: 'test-bookmarks' }],
-  } } }));
+  const baseUrl = 'http://127.0.0.1:' + model.address().port + '/v1';
+  const appEnv = {
+    ...process.env, PI_CODING_AGENT_DIR: join(temp, 'missing-pi-configuration'),
+    OPENAI_API_KEY: 'must-not-be-used', ANTHROPIC_API_KEY: 'must-not-be-used',
+  };
   const [app, chrome] = await Promise.all([
     launch(packaged || join(desktop, 'node_modules', 'electron', 'dist', 'electron.exe'),
-      packaged ? [] : [desktop], profile, { ...process.env, PI_CODING_AGENT_DIR: pi }),
+      packaged ? [] : [desktop], profile, appEnv),
     launch(browserPath, ['--headless=new', '--no-first-run', '--no-default-browser-check',
       '--load-extension=' + extension, '--disable-extensions-except=' + extension], browserProfile),
   ]);
@@ -134,6 +138,13 @@ try {
   const call = (name, ...args) => render('window.bookmarkApp.' + name + '(...' + JSON.stringify(args) + ')');
   await until(() => render('document.body.innerText.includes("欢迎使用 Smart Bookmark")'), 'desktop empty state');
   assert.equal((await call('snapshot')).bookmarks.length, 0);
+  assert.equal((await call('agentSettings')).ready, false);
+  await assert.rejects(call('agent', '未配置测试'), /配置模型/);
+  await render('document.querySelector("header button[aria-label=设置]").click(); true');
+  await until(() => render('document.querySelector("dialog[open]")?.innerText.includes("模型提供商")'), 'unified Agent settings');
+  await render('[...document.querySelectorAll("dialog nav button")].find(b => b.innerText.includes("Chrome 扩展")).click(); true');
+  await until(() => render('Boolean(document.querySelector("dialog[open] code"))'), 'Chrome settings category');
+  await render('document.querySelector("dialog [aria-label=关闭]").click(); true');
   const { code } = await call('chromeStatus');
   const { targetId } = await chrome('Target.createTarget', { url: worker.url.replace('background.js', 'popup.html') });
   const popup = await attach(chrome, targetId);
@@ -183,11 +194,40 @@ try {
   assert.deepEqual(await call('writeback', (await call('snapshot')).pending), { written: 1, errors: [] });
   assert.equal((await browser('chrome.bookmarks.search({title:"Desktop seed"})')).length, 0);
 
+  await render('[...document.querySelectorAll("header button")].find(b => b.innerText === "Pi Agent").click(); true');
+  await render('[...document.querySelectorAll("aside button")].find(b => b.innerText === "配置模型").click(); true');
+  await until(() => render('Boolean(document.querySelector("dialog[open] select"))'), 'Agent configuration shortcut');
+  await render('var provider = document.querySelector("dialog select"); provider.value = "compatible"; provider.dispatchEvent(new Event("change", {bubbles:true})); true');
+  await until(() => render('document.querySelectorAll("dialog input").length === 3'), 'compatible provider fields');
+  await render(`var fields = document.querySelectorAll("dialog input");
+    var values = ${JSON.stringify([baseUrl, 'test-bookmarks', 'test-only'])};
+    [...fields].forEach((field, index) => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(field, values[index]);
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    true`);
+  await render('[...document.querySelectorAll("dialog button")].find(b => b.innerText === "测试连接").click(); true');
+  await until(async () => {
+    const error = await render('document.querySelector("dialog [role=alert]")?.innerText');
+    if (error) throw new Error(error);
+    return render('document.querySelector("dialog [role=status]")?.innerText.includes("连接成功")');
+  }, 'synthetic tool call from settings');
+  assert.equal(JSON.stringify(contexts[0]).includes('Updated locally'), false);
+  assert.equal((await call('snapshot')).bookmarks.length, 1);
+  await render('document.querySelector("dialog form").requestSubmit(); true');
+  await until(async () => (await call('agentSettings')).ready, 'saved model configuration');
+  assert.equal((await call('agentSettings')).apiKey, undefined);
+  await render('document.querySelector("dialog [aria-label=关闭]").click(); true');
+  await until(() => render(`document.querySelector('aside[aria-label="Pi Agent"] header').innerText.includes("test-bookmarks")`), 'current model label');
   const agent = await call('agent', '请新增 SQLite 书签');
   assert.equal(agent.changed.length, 1);
   assert.equal((await call('snapshot')).bookmarks.some(bookmark => bookmark.title === 'Pi SQLite'), true);
-  assert.equal(requests, 2);
-  console.log('Passed: Electron window, Chromium extension pairing, import, local UI save, explicit writeback, and Pi SDK against a local test model.');
+  await call('saveAgentSettings', { provider: 'compatible', modelId: 'another-model', baseUrl });
+  await call('agent', '请新增另一条书签');
+  assert.equal(requests, 5);
+  assert.equal(contexts[3].model, 'another-model');
+  assert.equal(JSON.stringify(contexts[3]).includes('请新增 SQLite 书签'), false);
+  console.log('Passed: unified settings, embedded Pi configuration and model switch, Chromium pairing, import, local edit, and explicit writeback.');
 } finally {
   await Promise.allSettled(browsers.map(send => Promise.race([send('Browser.close'), delay(1200)])));
   await delay(500);

@@ -1,8 +1,9 @@
 import {
   createAgentSession, createBashToolDefinition, DefaultResourceLoader,
-  getAgentDir, SessionManager, SettingsManager,
+  SessionManager, SettingsManager,
 } from '@earendil-works/pi-coding-agent';
 import { runBookmarkCommand } from './agent-command.mjs';
+import { createAgentModel } from './agent-model.mjs';
 
 const instructions = `
 你是 Smart Bookmark 的本地书签助手。用中文简明回答。只处理用户明确要求的书签任务。
@@ -21,16 +22,18 @@ export class BookmarkAgent {
   #busy = false;
   #activity;
 
-  constructor(library, cwd) {
+  constructor(library, cwd, profile) {
     this.library = library;
     this.cwd = cwd;
+    this.profile = profile;
   }
 
   async #createSession() {
-    const agentDir = getAgentDir();
-    const settingsManager = SettingsManager.create(this.cwd, agentDir);
+    const agentDir = this.cwd;
+    const settingsManager = SettingsManager.inMemory({ cacheWarming: 'off' });
+    const { modelRuntime, model } = await createAgentModel(this.profile);
     const resourceLoader = new DefaultResourceLoader({
-      cwd: this.cwd, agentDir, settingsManager, systemPrompt: instructions,
+      cwd: this.cwd, agentDir, settingsManager, systemPrompt: instructions, appendSystemPrompt: [],
       noExtensions: true, noSkills: true, noPromptTemplates: true, noContextFiles: true, noThemes: true,
     });
     await resourceLoader.reload();
@@ -51,7 +54,8 @@ export class BookmarkAgent {
       },
     });
     const { session } = await createAgentSession({
-      cwd: this.cwd, agentDir, settingsManager, resourceLoader, sessionManager: SessionManager.inMemory(this.cwd),
+      cwd: this.cwd, agentDir, settingsManager, resourceLoader, modelRuntime, model,
+      sessionManager: SessionManager.inMemory(this.cwd),
       tools: ['bash'], customTools: [bash],
     });
     return session;
@@ -65,11 +69,6 @@ export class BookmarkAgent {
     const deadline = setTimeout(() => { void this.#session?.abort(); }, 120000);
     try {
       this.#session ??= await this.#createSession();
-      if (!this.#session.model) {
-        this.#session.dispose();
-        this.#session = undefined;
-        throw new Error('请先在 Pi 配置模型和凭据，再打开应用使用 Agent');
-      }
       const messages = [];
       const unsubscribe = this.#session.subscribe(event => {
         if (event.type === 'message_end' && event.message.role === 'assistant') messages.push(event.message);
@@ -90,9 +89,11 @@ export class BookmarkAgent {
         changed: [...this.#activity.changed],
       };
     } catch (error) {
-      if (!this.#activity.changed.size) throw error;
+      const key = this.profile.apiKey;
+      const message = key ? String(error.message).replaceAll(key, '••••••') : error.message;
+      if (!this.#activity.changed.size) throw new Error(message);
       return {
-        text: '模型响应中断：' + error.message + '。已执行的书签修改保存在本地。',
+        text: '模型响应中断：' + message + '。已执行的书签修改保存在本地。',
         matched: [...this.#activity.matched],
         changed: [...this.#activity.changed],
       };

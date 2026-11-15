@@ -1,19 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Bookmark as BookmarkIcon, Download, Menu, Plus, Puzzle, Search, Sparkles, Upload, X } from 'lucide-react';
+import { Bookmark as BookmarkIcon, Download, Menu, Plus, Puzzle, Search, Settings, Sparkles, Upload, X } from 'lucide-react';
 import { BookmarkDetailPanel } from './components/BookmarkDetailPanel';
 import { BookmarkList } from './components/BookmarkList';
 import { NewBookmarkModal } from './components/NewBookmarkModal';
 import { SidebarTree } from './components/SidebarTree';
 import { AgentPanel, type Message } from './components/AgentPanel';
-import { Dialog } from './components/Dialog';
+import { SettingsDialog, type SettingsPage } from './components/SettingsDialog';
 import { WritebackDialog } from './components/WritebackDialog';
-import { api, type BookmarkInput, type ChromeConnection, type Snapshot } from './lib/api';
+import { api, messageOf, type AgentSettings, type BookmarkInput, type ChromeConnection, type Snapshot } from './lib/api';
 import { collectAllTags, filterBookmarks } from './lib/bookmarkStore';
 import type { ImportStatus, PendingChange, SidebarScope } from './lib/types';
 
 const empty: Snapshot = { folders: [], bookmarks: [], pending: [] };
-const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
-  .replace(/^Error invoking remote method '[^']+': Error: /, '');
 
 export default function App() {
   const [data, setData] = useState(empty);
@@ -26,7 +24,9 @@ export default function App() {
   const [error, setError] = useState('');
   const [sidebar, setSidebar] = useState(false);
   const [mobileDetail, setMobileDetail] = useState(false);
-  const [modal, setModal] = useState<'new' | 'connection' | 'writeback' | null>(null);
+  const [modal, setModal] = useState<'new' | 'settings' | 'writeback' | null>(null);
+  const [settingsPage, setSettingsPage] = useState<SettingsPage>('agent');
+  const [agentSettings, setAgentSettings] = useState<AgentSettings | null>(null);
   const [importStatus, setImportStatus] = useState<ImportStatus>('idle');
   const [importedCount, setImportedCount] = useState(0);
   const [writing, setWriting] = useState(false);
@@ -34,7 +34,7 @@ export default function App() {
   const [agentOpen, setAgentOpen] = useState(false);
   const [agentBusy, setAgentBusy] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [copied, setCopied] = useState(false);
+  const [newAgentSession, setNewAgentSession] = useState(false);
   const search = useRef<HTMLInputElement>(null);
   const refreshSequence = useRef(0);
 
@@ -49,6 +49,7 @@ export default function App() {
 
   useEffect(() => {
     void refresh().catch(error => setError(messageOf(error)));
+    void api.agentSettings().then(setAgentSettings).catch(error => setError(messageOf(error)));
     const status = () => void api.chromeStatus().then(setChrome).catch(error => setError(messageOf(error)));
     status();
     const timer = window.setInterval(status, 1200);
@@ -73,7 +74,11 @@ export default function App() {
   const tags = useMemo(() => collectAllTags(data.bookmarks), [data.bookmarks]);
   const selected = data.bookmarks.find(bookmark => bookmark.id === selectedId) ?? null;
   const deleted = data.pending.filter(change => change.type === 'deleted');
-  const openConnection = () => { setCopied(false); setModal('connection'); };
+  const openSettings = (page?: SettingsPage) => {
+    if (page) setSettingsPage(page);
+    setModal('settings');
+  };
+  const openConnection = () => openSettings('chrome');
   const openWriteback = () => { setResult(null); setModal('writeback'); };
   const clearFilters = () => { setScope({ kind: 'all' }); setQuery(''); };
   const select = (id: string) => { setSelectedId(id); setMobileDetail(true); };
@@ -117,7 +122,8 @@ export default function App() {
   }
 
   async function send(prompt: string) {
-    if (agentBusy) return;
+    if (agentBusy || !agentSettings?.ready) return;
+    setNewAgentSession(false);
     setAgentBusy(true);
     setMessages(previous => [...previous, { id: crypto.randomUUID(), role: 'user', text: prompt }]);
     try {
@@ -170,6 +176,7 @@ export default function App() {
           <Puzzle size={15} /><span className="hidden xl:inline">{chrome.state === 'connected' ? '已连接' : '连接 Chrome'}</span>
         </button>
         <button className="sb-button" aria-pressed={agentOpen} onClick={() => setAgentOpen(!agentOpen)}><Sparkles size={15} />Pi Agent</button>
+        <button className="sb-button" aria-label="设置" title="设置" onClick={() => openSettings()}><Settings size={16} /></button>
       </header>
       {error && <div role="alert" className="flex items-center justify-between gap-4 bg-[#fce8e6] px-4 py-2 text-[13px] text-[#c5221f]">
         <span>{error}</span><button aria-label="关闭错误提示" onClick={() => setError('')}><X size={16} /></button>
@@ -190,6 +197,8 @@ export default function App() {
           <BookmarkDetailPanel {...detailProps} onCloseMobile={() => setMobileDetail(false)} />
         </div>}
         {agentOpen && <AgentPanel messages={messages} busy={agentBusy} bookmarks={data.bookmarks} close={() => setAgentOpen(false)}
+          model={agentSettings?.ready ? agentSettings.modelId : ''} newSession={newAgentSession}
+          configure={() => openSettings('agent')}
           send={send} select={id => { clearFilters(); select(id); setAgentOpen(false); }} />}
       </main>
       {modal === 'new' && <NewBookmarkModal folders={data.folders} defaultFolderId={scope.kind === 'folder' ? scope.folderId : 'local'}
@@ -199,21 +208,12 @@ export default function App() {
           select(bookmark.id);
           setModal(null);
         })} />}
-      {modal === 'connection' && <Dialog title="Chrome 扩展连接" close={() => setModal(null)}>
-        <div className="space-y-3 text-[13px]">
-          <p role="status" className={chrome.state === 'connected' ? 'text-[#137333]' : 'text-[#5f6368]'}>
-            {chrome.state === 'connected' ? '已连接到 Chrome' : chrome.error || 'Chrome 扩展未连接'}
-          </p>
-          {chrome.state !== 'connected' && <>
-            <p>在 Chrome 的扩展管理页加载 Smart Bookmark。打开扩展弹窗并输入下方配对码。</p>
-            <div className="flex items-center gap-2">
-              <code className="rounded-md bg-[#f1f3f4] px-3 py-2 select-all">{chrome.code}</code>
-              <button className="sb-button" onClick={() => void navigator.clipboard.writeText(chrome.code)
-                .then(() => setCopied(true)).catch(error => setError(messageOf(error)))}>{copied ? '已复制' : '复制配对码'}</button>
-            </div>
-          </>}
-        </div>
-      </Dialog>}
+      {modal === 'settings' && <SettingsDialog page={settingsPage} selectPage={setSettingsPage} chrome={chrome}
+        settings={agentSettings} agentBusy={agentBusy} close={() => setModal(null)} saved={settings => {
+          setAgentSettings(settings);
+          setMessages([]);
+          setNewAgentSession(settings.ready);
+        }} />}
       {modal === 'writeback' && <WritebackDialog changes={data.pending} folders={data.folders}
         connected={chrome.state === 'connected' && Boolean(data.chromeProfile)} busy={writing} result={result}
         confirm={writeback} close={() => setModal(null)} />}

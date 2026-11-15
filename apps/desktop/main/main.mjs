@@ -1,15 +1,17 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from 'electron';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Library } from './library.mjs';
 import { ChromeBridge } from './bridge.mjs';
+import { AgentSettings } from './agent-settings.mjs';
 
 const index = fileURLToPath(new URL('../dist/index.html', import.meta.url));
 let window;
 let library;
 let chrome;
 let agent;
+let agentBusy = false;
 let writebackInProgress = false;
 let importInProgress = false;
 
@@ -45,6 +47,7 @@ function start() {
   const dataDir = app.getPath('userData');
   mkdirSync(dataDir, { recursive: true });
   library = new Library(join(dataDir, 'bookmarks.sqlite'));
+  const agentSettings = new AgentSettings(library, safeStorage);
   chrome = new ChromeBridge(library);
   void chrome.ready.catch(() => {});
   handle('snapshot', () => library.snapshot());
@@ -98,12 +101,32 @@ function start() {
     }
   });
 
+  handle('agentSettings', () => agentSettings.status());
+  handle('saveAgentSettings', input => {
+    if (agentBusy) throw new Error('请等待当前 Agent 请求完成后再保存');
+    const settings = agentSettings.save(input);
+    agent?.close();
+    agent = undefined;
+    return settings;
+  });
+  handle('testAgentSettings', async input => {
+    const profile = agentSettings.resolve(input);
+    const { testAgentModel } = await import('./agent-model.mjs');
+    await testAgentModel(profile);
+  });
   handle('agent', async text => {
-    if (!agent) {
-      const { BookmarkAgent } = await import('./agent.mjs');
-      agent ??= new BookmarkAgent(library, dataDir);
+    if (agentBusy) throw new Error('Pi Agent 正在处理上一条消息');
+    if (!agentSettings.status().ready) throw new Error('请在「设置 → Agent」配置模型');
+    agentBusy = true;
+    try {
+      if (!agent) {
+        const { BookmarkAgent } = await import('./agent.mjs');
+        agent = new BookmarkAgent(library, dataDir, agentSettings.resolve());
+      }
+      return await agent.prompt(text);
+    } finally {
+      agentBusy = false;
     }
-    return agent.prompt(text);
   });
   openWindow();
   app.on('window-all-closed', () => app.quit());
